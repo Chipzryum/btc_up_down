@@ -1,0 +1,42 @@
+# Virtual Environment
+env/
+venv/
+ENV/
+.env
+.venv
+
+# User algorithms
+#src/models/predictor.py
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Results files
+Output/backtest_results.html
+*.csv
+
+# IDE artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
