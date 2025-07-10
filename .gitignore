@@ -6,7 +6,7 @@ ENV/
 .venv
 
 # User algorithms
-src/models/predictor.py
+src/models
 
 # Python artifacts
 __pycache__/

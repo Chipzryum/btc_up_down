@@ -93,25 +93,42 @@ class BinanceDataFetcher:
 
         return df.copy() # Return a copy to prevent mutation
 
-    def get_current_price(self):
+    def get_latest_kline(self):
         """
-        Gets the most recent price for the symbol.
+        Gets the most recent completed kline for the symbol.
         """
-        url = f"{self.base_url}/ticker/price"
-        params = {'symbol': self.symbol}
+        # Fetch the last 2 1-minute klines. The second to last one is guaranteed to be complete.
+        url = f"{self.base_url}/klines"
+        params = {'symbol': self.symbol, 'interval': '1m', 'limit': 2}
 
         try:
             response = requests.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            price = float(data['price'])
-            logging.debug(f"Current price for {self.symbol}: {price}")
-            return price
+            if not data:
+                logging.warning("No kline data returned from Binance.")
+                return None
+
+            # The most recent kline might be incomplete, so we take the one before it.
+            # However, for live trading, we often want the current price action.
+            # Let's use the most recent one, assuming the user wants up-to-the-second data.
+            last_kline = data[-1]
+
+            kline_data = {
+                'timestamp': datetime.fromtimestamp(last_kline[0] / 1000),
+                'open': float(last_kline[1]),
+                'high': float(last_kline[2]),
+                'low': float(last_kline[3]),
+                'close': float(last_kline[4]),
+                'volume': float(last_kline[5])
+            }
+            logging.debug(f"Latest kline for {self.symbol}: {kline_data}")
+            return kline_data
         except requests.exceptions.RequestException as e:
-            logging.error(f"Could not fetch current price: {e}")
+            logging.error(f"Could not fetch latest kline: {e}")
             return None
-        except (KeyError, ValueError) as e:
-            logging.error(f"Error parsing price data: {e}")
+        except (KeyError, ValueError, IndexError) as e:
+            logging.error(f"Error parsing kline data: {e}")
             return None
 
     def start_live_updates(self, callback):
@@ -120,40 +137,24 @@ class BinanceDataFetcher:
         """
         logging.info("Starting live price updates. Press Ctrl+C to stop.")
 
-        current_hour_data = []
-
         try:
             while True:
-                current_time = datetime.now()
-
-                # Reset hourly data at the beginning of a new hour
-                if current_time.minute == 0 and (not current_hour_data or current_hour_data[-1]['timestamp'].hour != current_time.hour):
-                    logging.info(f"New hour ({current_time.strftime('%Y-%m-%d %H')}:00) detected. Resetting hourly data.")
-                    current_hour_data = []
-
-                price = self.get_current_price()
-                if price is None:
-                    logging.warning("Skipping update cycle due to price fetch failure.")
+                kline_data = self.get_latest_kline()
+                if kline_data is None:
+                    logging.warning("Skipping update cycle due to kline fetch failure.")
                     time.sleep(20) # Wait longer if API fails
                     continue
 
-                update_data = {
-                    'timestamp': current_time,
-                    'price': price,
-                }
-                current_hour_data.append(update_data)
+                logging.debug(f"Live update: Open={kline_data['open']:.2f}, Time={kline_data['timestamp'].strftime('%H:%M:%S')}")
 
-                logging.debug(f"Live update: Price={price:.2f}, Time={current_time.strftime('%H:%M:%S')}")
-
-                # Trigger the callback with the latest data
-                callback({
-                    'timestamp': current_time,
-                    'price': price,
-                    'hour_data': current_hour_data.copy()
-                })
+                # Trigger the callback with the latest kline data
+                callback(kline_data)
 
                 # Sleep until the next interval
-                time.sleep(LIVE_UPDATE_INTERVAL * 60)
+                # We align the sleep to the start of the next minute to be in sync with candle closes
+                now = datetime.now()
+                seconds_to_next_minute = 60 - now.second
+                time.sleep(seconds_to_next_minute)
 
         except KeyboardInterrupt:
             logging.info("Live updates stopped by user.")

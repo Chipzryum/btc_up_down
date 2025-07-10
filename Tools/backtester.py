@@ -1,11 +1,37 @@
 import pandas as pd
 import os
-from config.config import BACKTEST_FILE, BACKTEST_TRIGGER_MINUTE, REQUIRED_MINUTES
+import importlib.util
+from config.config import BACKTEST_FILE, BACKTEST_TRIGGER_MINUTE, REQUIRED_MINUTES, MODEL_FILE
 from Models.predictor import PricePredictor
 
 class Backtester:
     def __init__(self):
-        self.predictor = PricePredictor()
+        # Dynamically load the model class specified in config
+        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Models", MODEL_FILE)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Error: Model file '{MODEL_FILE}' not found in the Models directory. "
+                                    f"Please check your MODEL_FILE setting in config.py.")
+            
+        # Import the module and get the predictor class
+        spec = importlib.util.spec_from_file_location("dynamic_model", model_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        
+        # Get the first class defined in the module that is a subclass of PricePredictor
+        predictor_class = None
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if isinstance(attr, type) and issubclass(attr, PricePredictor) and attr != PricePredictor:
+                predictor_class = attr
+                break
+        
+        if not predictor_class:
+            raise ValueError(f"Error: No PricePredictor subclass found in '{MODEL_FILE}'. "
+                             f"Your model file must contain at least one class that inherits from PricePredictor. "
+                             f"Example: class YourPredictor(PricePredictor): ...")
+            
+        self.predictor = predictor_class()
+        print(f"Using predictor: {predictor_class.__name__} from {MODEL_FILE}")
         self.results = []
 
     def run_backtest(self):
@@ -40,6 +66,7 @@ class Backtester:
             for current_hour in unique_hours:
                 group = hourly_groups.get_group(current_hour)
                 print(f"\nProcessing hour: {current_hour.strftime('%Y-%m-%d %H:%M')}")
+                print(f" - Total rows in hour: {len(group)}")
 
                 if len(group) < REQUIRED_MINUTES:
                     print(f"Skipping hour {current_hour}, not enough minutes in group.")
@@ -49,20 +76,40 @@ class Backtester:
                     print(f"Skipping hour {current_hour}, not enough data for trigger minute.")
                     continue
 
-                trigger_candle = group.iloc[BACKTEST_TRIGGER_MINUTE]
+                # --- Start of changes ---
+                # Reset predictor state for the new hour. This is crucial for stateful models.
+                self.predictor.reset_state()
 
-                live_update = {
+                # 1. Feed the first candle of the hour to establish the starting price
+                start_of_hour_candle = group.iloc[0]
+                live_update_start = {
+                    'timestamp': start_of_hour_candle['timestamp'],
+                    'price': start_of_hour_candle['open']
+                }
+                # This call will set the start_of_hour_price in the predictor
+                self.predictor.process_live_update(live_update_start)
+                print(f" - Start of hour price recorded: {start_of_hour_candle['open']:.2f} at {start_of_hour_candle['timestamp']}")
+
+                # 2. Feed the trigger candle to get the prediction
+                trigger_candle = group.iloc[BACKTEST_TRIGGER_MINUTE]
+                print(f" - Trigger candle at index {BACKTEST_TRIGGER_MINUTE}: {trigger_candle.to_dict()}")
+
+                live_update_trigger = {
                     'timestamp': trigger_candle['timestamp'],
                     'price': trigger_candle['open']
                 }
 
-                prediction, confidence, explanation = self.predictor.process_live_update(live_update)
+                prediction, confidence, explanation = self.predictor.process_live_update(live_update_trigger)
+                # --- End of changes ---
+                print(f" - Prediction: {prediction}, Confidence: {confidence}, Explanation: {explanation}")
 
                 if prediction is not None:
                     hourly_open = group.iloc[0]['open']
                     hourly_close = group.iloc[-1]['close']
                     actual_outcome = 1 if hourly_close > hourly_open else 0
                     correct = "✅" if prediction == actual_outcome else "❌"
+                    print(f" - Hourly Open: {hourly_open}, Hourly Close: {hourly_close}, Actual: {actual_outcome}")
+                    print(f" - Prediction was: {'Up' if prediction == 1 else 'Down'} => {correct}")
 
                     self.results.append({
                         'Hour': current_hour.strftime('%Y-%m-%d %H:%M'),
@@ -119,6 +166,10 @@ class Backtester:
         if current_loss_streak > 0:
             streaks.append(('Loss', current_loss_streak))
 
+        # Count overall prediction distribution (Up vs Down)
+        up_predictions = sum(1 for r in self.results if r['Predicted'] == "Up")
+        down_predictions = total_predictions - up_predictions
+
         html_content = f"""
         <html>
         <head>
@@ -142,10 +193,13 @@ class Backtester:
             <h2>Summary</h2>
             <div class="dashboard">
                 <div class="chart-container">
-                    <canvas id="pieChart"></canvas>
+                    <canvas id="resultsPieChart"></canvas>
                 </div>
                 <div class="chart-container">
                     <canvas id="streakChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="predictionPieChart"></canvas>
                 </div>
                 <div>
                     <p><b>Total Predictions:</b> {total_predictions}</p>
@@ -189,20 +243,20 @@ class Backtester:
             </table>
             <script>
                 // Pie Chart: Correct vs Incorrect
-                const pieCtx = document.getElementById('pieChart').getContext('2d');
-                new Chart(pieCtx, {
+                const resultsCtx = document.getElementById('resultsPieChart').getContext('2d');
+                new Chart(resultsCtx, {
                     type: 'pie',
                     data: {
                         labels: ['Correct', 'Incorrect'],
                         datasets: [{
-                            data: [%d, %d],
+                            data: [""" + f"{correct_predictions}, {incorrect_predictions}" + """],
                             backgroundColor: ['#4caf50', '#f44336'],
                         }]
                     },
                     options: {
                         plugins: {
                             legend: { display: true, position: 'bottom' },
-                            title: { display: true, text: 'Prediction Results' }
+                            title: { display: true, text: 'Prediction Accuracy' }
                         }
                     }
                 });
@@ -215,7 +269,7 @@ class Backtester:
                         labels: ['Longest Win Streak', 'Longest Loss Streak'],
                         datasets: [{
                             label: 'Streak Length',
-                            data: [%d, %d],
+                            data: [""" + f"{longest_win_streak}, {longest_loss_streak}" + """],
                             backgroundColor: ['#2196f3', '#ff9800'],
                         }]
                     },
@@ -229,10 +283,29 @@ class Backtester:
                         }
                     }
                 });
+
+                // New Pie Chart: Distribution of Predictions (Up vs Down)
+                const predictionCtx = document.getElementById('predictionPieChart').getContext('2d');
+                new Chart(predictionCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: ['Up', 'Down'],
+                        datasets: [{
+                            data: [""" + f"{up_predictions}, {down_predictions}" + """],
+                            backgroundColor: ['#8bc34a', '#03a9f4'],
+                        }]
+                    },
+                    options: {
+                        plugins: {
+                            legend: { display: true, position: 'bottom' },
+                            title: { display: true, text: 'Prediction Direction' }
+                        }
+                    }
+                });
             </script>
         </body>
         </html>
-        """ % (correct_predictions, incorrect_predictions, longest_win_streak, longest_loss_streak)
+        """
 
         # Create Output directory if it doesn't exist
         output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Output")
