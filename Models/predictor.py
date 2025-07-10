@@ -22,10 +22,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class PricePredictor:
     """
-    TEMPLATE: Create your own price prediction algorithm!
-    - Edit the make_prediction() method below.
-    - Use self.history for historical data if you want.
-    - Return 1 for UP, 0 for DOWN.
+    Base class for price prediction algorithms.
+    This class provides common functionality and serves as a parent for custom predictors.
     """
     def __init__(self):
         self.history = pd.DataFrame()
@@ -42,24 +40,17 @@ class PricePredictor:
 
     def make_prediction(self, current_price, timestamp):
         """
-        --- YOUR ALGORITHM GOES HERE! ---
+        Base implementation - should be overridden by subclasses.
         Args:
             current_price (float): The most recent price.
             timestamp (datetime): The timestamp of the current price.
         Returns:
             tuple: (prediction, confidence, explanation)
-                - prediction (int): 1 for UP, 0 for DOWN.
-                - confidence (float): 0.0 to 1.0 (how sure are you?)
-                - explanation (str): Short reason for your prediction.
         """
-        # --- EXAMPLE: Simple Alternating Prediction ---
-        # Replace this with your own logic!
-        prediction = self.next_prediction
-        confidence = 1.0
-        explanation = f"Alternating prediction: {'UP' if prediction == 1 else 'DOWN'}"
-
-        # Alternate for next call (remove this for your own logic)
-        self.next_prediction = 1 - self.next_prediction
+        # Default implementation - subclasses should override this
+        prediction = 1  # Default to UP
+        confidence = 0.5  # Medium confidence
+        explanation = "Base predictor: Default prediction (UP)"
 
         return prediction, confidence, explanation
 
@@ -75,3 +66,22 @@ class PricePredictor:
             return None, None, "Update data is missing price or timestamp."
 
         return self.make_prediction(current_price, timestamp)
+
+
+class AlwaysUpPredictor(PricePredictor):
+    """
+    Simple predictor that always predicts UP with high confidence.
+    This is the default model when using predictor.py directly.
+    """
+    def __init__(self):
+        super().__init__()
+    
+    def make_prediction(self, current_price, timestamp):
+        """
+        Always predicts UP with high confidence regardless of market conditions.
+        """
+        prediction = 1  # Always UP
+        confidence = 0.9  # High confidence
+        explanation = "Always UP Predictor: Consistently predicting UP regardless of market conditions"
+        
+        return prediction, confidence, explanation
