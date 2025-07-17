@@ -77,11 +77,8 @@ def main():
             minutes_since_prediction = float('inf')
 
         # Process update and get prediction
-        # We pass a simplified dictionary to the predictor, which expects 'price' and 'timestamp'
-        prediction, confidence, explanation = predictor.process_live_update({
-            'timestamp': current_time,
-            'price': current_price
-        })
+        # Pass the entire OHLCV dictionary to the predictor
+        prediction, confidence, explanation = predictor.process_live_update(update_data)
 
         if prediction is not None:
             predictions_made += 1

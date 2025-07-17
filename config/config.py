@@ -12,4 +12,4 @@ REQUIRED_MINUTES = 4                # Minimum number of data points required in 
 
 # --- Model Configuration ---
 # Used to specify which model file to use from the Models folder
-MODEL_FILE = 'Template_Empty.py'     # Model file name in the Models folder
+MODEL_FILE = 'Predictor_2.py'     # Model file name in the Models folder

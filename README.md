@@ -1,4 +1,3 @@
-
 # BTC Up/Down Algorithm Template
 
 Welcome! This project lets you **create and test your own Bitcoin price prediction algorithms**—no coding experience required.
@@ -73,7 +72,7 @@ Welcome! This project lets you **create and test your own Bitcoin price predicti
 
 ## 📊 Understanding Results
 
-- After running, open `backtest_results.html` in your browser.
+- After running, open `Output/backtest_results.html` in your browser.
 - See your prediction accuracy, streaks, and detailed results.
 
 ## 🛠️ Project Structure
@@ -82,6 +81,7 @@ Welcome! This project lets you **create and test your own Bitcoin price predicti
 btcUP_DOWN/
 ├── config/             # Configuration settings
 ├── data/               # Place your CSV data files here
+├── Output/             # Generated reports and results
 ├── src/
 │   ├── data/           # Data handling components
 │   ├── models/         # Prediction algorithms
