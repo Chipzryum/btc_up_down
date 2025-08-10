@@ -1,6 +1,6 @@
 # Configuration variables
-INPUT_FILE = 'Data/btc_minute_data_training.csv'  # Path to the input minute data file
-OUTPUT_FILE = 'Data/btc_hourly_data_training.csv'  # Path to save the hourly data
+INPUT_FILE = 'Data/btc_minute_data_full.csv'  # Path to the input minute data file
+OUTPUT_FILE = 'Data/btc_hourly_data_full.csv'  # Path to save the hourly data
 
 import pandas as pd
 import os

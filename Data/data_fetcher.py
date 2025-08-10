@@ -3,160 +3,156 @@ import pandas as pd
 import time
 import logging
 from datetime import datetime, timedelta
-from config.config import HISTORICAL_HOURS, HISTORICAL_INTERVAL, LIVE_UPDATE_INTERVAL
+
+# ==============================
+# CONFIGURATION (MODIFY THESE)
+# ==============================
+SYMBOL = "BTCUSDT"  # Trading pair
+START_DATE = "2017-07-08"  # Start date in YYYY-MM-DD format
+END_DATE = "2025-07-26"  # End date in YYYY-MM-DD format (None for current time)
+INTERVAL = "1h"  # Kline interval
+MAX_DATA_POINTS = 0  # Maximum number of candles to fetch (0 for all available)
+SAVE_PATH = "Data/btc_data.csv"  # Output file path
+# ==============================
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 class BinanceDataFetcher:
-    """
-    Handles fetching historical and live cryptocurrency data from the Binance API.
-    """
-    def __init__(self, symbol="BTCUSDT"):
-        """
-        Initializes the data fetcher for a specific symbol.
-        """
-        self.base_url = "https://api.binance.com/api/v3"
+    def __init__(self, symbol, interval):
+        self.spot_url = "https://api.binance.com/api/v3"
+        self.futures_url = "https://fapi.binance.com/fapi/v1"
         self.symbol = symbol
+        self.interval = interval
         self.historical_data = pd.DataFrame()
-        logging.info(f"BinanceDataFetcher initialized for symbol: {self.symbol}")
+        logging.info(f"Initialized for {symbol} @ {interval} interval")
 
-    def fetch_kline_data(self, start_time, end_time, interval='1m'):
-        """
-        Fetches Kline (candlestick) data for a specific time range and interval.
+    def _interval_to_timedelta(self):
+        """Convert Binance interval string to timedelta"""
+        unit = self.interval[-1]
+        value = int(self.interval[:-1])
 
-        Args:
-            start_time (datetime): The start of the time range.
-            end_time (datetime): The end of the time range.
-            interval (str): The candle interval (e.g., '1m', '1h').
+        conversions = {
+            'm': timedelta(minutes=value),
+            'h': timedelta(hours=value),
+            'd': timedelta(days=value),
+            'w': timedelta(weeks=value),
+            'M': timedelta(days=30 * value)
+        }
+        return conversions.get(unit, timedelta(minutes=value))
 
-        Returns:
-            pd.DataFrame: A DataFrame containing the kline data, or an empty DataFrame on error.
-        """
+    def fetch_kline_data(self, start_time, end_time):
         start_ts = int(start_time.timestamp() * 1000)
         end_ts = int(end_time.timestamp() * 1000)
-
-        url = f"{self.base_url}/klines"
+        url = f"{self.spot_url}/klines"
         params = {
             'symbol': self.symbol,
-            'interval': interval,
+            'interval': self.interval,
             'startTime': start_ts,
             'endTime': end_ts,
-            'limit': 1000  # Max limit per request
+            'limit': 1000
         }
-
-        logging.debug(f"Fetching klines from {start_time} to {end_time} with interval {interval}.")
-
+        logging.debug(f"Fetching {self.interval} data from {start_time} to {end_time}")
         try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()  # Raises HTTPError for bad responses (4XX or 5XX)
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
             data = response.json()
-
             if not data:
-                logging.warning("No data returned from Binance for the specified range.")
+                logging.warning("No data returned for time range")
                 return pd.DataFrame()
 
-            # Process data into a structured DataFrame
+            # Process kline data (excluding specified fields)
             processed_data = [{
-                'timestamp': datetime.fromtimestamp(kline[0] / 1000),
+                'open_time': datetime.fromtimestamp(kline[0] / 1000),
                 'open': float(kline[1]),
                 'high': float(kline[2]),
                 'low': float(kline[3]),
                 'close': float(kline[4]),
-                'volume': float(kline[5])
+                'volume': float(kline[5]),
+                'taker_buy_base_asset_volume': float(kline[9])
             } for kline in data]
 
             df = pd.DataFrame(processed_data)
-            df.set_index('timestamp', inplace=True)
-            logging.info(f"Successfully fetched {len(df)} klines.")
+            df.set_index('open_time', inplace=True)
+            logging.info(f"Fetched {len(df)} records")
             return df
-
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error fetching kline data from Binance: {e}")
+            logging.error(f"Spot API request failed: {e}")
             return pd.DataFrame()
 
-    def fetch_past_data(self):
-        """
-        Fetches historical data based on the settings in config.py.
-        """
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=HISTORICAL_HOURS)
+    def fetch_historical_data(self):
+        start_dt = datetime.strptime(START_DATE, "%Y-%m-%d")
+        end_dt = datetime.strptime(END_DATE, "%Y-%m-%d") if END_DATE else datetime.now()
 
-        logging.info(f"Fetching historical data for the last {HISTORICAL_HOURS} hours.")
+        if MAX_DATA_POINTS and MAX_DATA_POINTS > 0:
+            max_duration = self._interval_to_timedelta() * MAX_DATA_POINTS
+            adjusted_start = end_dt - max_duration
+            start_dt = max(start_dt, adjusted_start)
+            logging.info(f"Adjusted start to {start_dt} based on max data points")
 
-        df = self.fetch_kline_data(start_time, end_time, HISTORICAL_INTERVAL)
-        if not df.empty:
-            self.historical_data = df
-            logging.info(f"Stored {len(df)} historical {HISTORICAL_INTERVAL} candles.")
-        else:
-            logging.warning("Failed to fetch historical data; DataFrame is empty.")
+        current_time = start_dt
+        all_data = pd.DataFrame()
+        interval_delta = self._interval_to_timedelta()
+        chunk_size = 1000 * interval_delta
 
-        return df.copy() # Return a copy to prevent mutation
+        logging.info(f"Fetching OHLCV data from {start_dt} to {end_dt}")
+        while current_time < end_dt:
+            chunk_end = min(current_time + chunk_size, end_dt)
 
-    def get_latest_kline(self):
-        """
-        Gets the most recent completed kline for the symbol.
-        """
-        # Fetch the last 2 1-minute klines. The second to last one is guaranteed to be complete.
-        url = f"{self.base_url}/klines"
-        params = {'symbol': self.symbol, 'interval': '1m', 'limit': 2}
+            df = self.fetch_kline_data(current_time, chunk_end)
+            if df.empty:
+                break
 
-        try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            if not data:
-                logging.warning("No kline data returned from Binance.")
-                return None
+            all_data = pd.concat([all_data, df])
 
-            # The most recent kline might be incomplete, so we take the one before it.
-            # However, for live trading, we often want the current price action.
-            # Let's use the most recent one, assuming the user wants up-to-the-second data.
-            last_kline = data[-1]
+            if MAX_DATA_POINTS and MAX_DATA_POINTS > 0 and len(all_data) >= MAX_DATA_POINTS:
+                all_data = all_data.iloc[:MAX_DATA_POINTS]
+                break
 
-            kline_data = {
-                'timestamp': datetime.fromtimestamp(last_kline[0] / 1000),
-                'open': float(last_kline[1]),
-                'high': float(last_kline[2]),
-                'low': float(last_kline[3]),
-                'close': float(last_kline[4]),
-                'volume': float(last_kline[5])
-            }
-            logging.debug(f"Latest kline for {self.symbol}: {kline_data}")
-            return kline_data
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Could not fetch latest kline: {e}")
-            return None
-        except (KeyError, ValueError, IndexError) as e:
-            logging.error(f"Error parsing kline data: {e}")
-            return None
+            current_time = df.index[-1] + interval_delta
+            time.sleep(0.1)
 
-    def start_live_updates(self, callback):
-        """
-        Starts a loop to fetch live data and triggers a callback function.
-        """
-        logging.info("Starting live price updates. Press Ctrl+C to stop.")
+        if all_data.empty:
+            logging.error("No OHLCV data fetched")
+            return pd.DataFrame()
 
-        try:
-            while True:
-                kline_data = self.get_latest_kline()
-                if kline_data is None:
-                    logging.warning("Skipping update cycle due to kline fetch failure.")
-                    time.sleep(20) # Wait longer if API fails
-                    continue
+        # Add labels: 1 for green candle (close > open), 0 for red
+        all_data['label'] = (all_data['close'] > all_data['open']).astype(int)
 
-                logging.debug(f"Live update: Open={kline_data['open']:.2f}, Time={kline_data['timestamp'].strftime('%H:%M:%S')}")
+        # Round columns to reasonable decimal places
+        price_cols = ['open', 'high', 'low', 'close']
+        for col in price_cols:
+            if col in all_data.columns:
+                all_data[col] = all_data[col].round(2)
 
-                # Trigger the callback with the latest kline data
-                callback(kline_data)
+        if 'volume' in all_data.columns:
+            all_data['volume'] = all_data['volume'].round(4)
 
-                # Sleep until the next interval
-                # We align the sleep to the start of the next minute to be in sync with candle closes
-                now = datetime.now()
-                seconds_to_next_minute = 60 - now.second
-                time.sleep(seconds_to_next_minute)
+        if 'taker_buy_base_asset_volume' in all_data.columns:
+            all_data['taker_buy_base_asset_volume'] = all_data['taker_buy_base_asset_volume'].round(4)
 
-        except KeyboardInterrupt:
-            logging.info("Live updates stopped by user.")
-        except Exception as e:
-            logging.error(f"An unexpected error occurred during live updates: {e}", exc_info=True)
+        self.historical_data = all_data
+        logging.info(f"Total collected: {len(all_data)} records")
+        return all_data.copy()
+
+    def save_to_csv(self, filepath=SAVE_PATH):
+        self.historical_data.to_csv(filepath)
+        logging.info(f"Data saved to {filepath}")
+
+
+if __name__ == "__main__":
+    fetcher = BinanceDataFetcher(
+        symbol=SYMBOL,
+        interval=INTERVAL
+    )
+
+    data = fetcher.fetch_historical_data()
+    if not data.empty:
+        fetcher.save_to_csv()
+        print(f"First 5 records:\n{data.head()}")
+        print(f"Last 5 records:\n{data.tail()}")
+        print(f"Data shape: {data.shape}")
+        print(f"Columns: {list(data.columns)}")
+    else:
+        logging.error("No data was fetched")

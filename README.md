@@ -1,5 +1,21 @@
 # BTC Up/Down Algorithm Template
+# Bitcoin Sentiment Analysis
 
+This project analyzes the relationship between Bitcoin price movements and sentiment indicators from various social media platforms (Twitter, Reddit, Bitcointalk).
+
+## Purpose
+
+The script identifies which sentiment indicators from the Augmento dataset are the best predictors of Bitcoin price candle colors (up or down movements).
+
+## Data Files
+
+The analysis requires two main data files:
+- `Data/augmento_btc.csv` - Contains sentiment indicators from various social platforms
+- `Data/btc_data.csv` - Contains Bitcoin price data with OHLCV information
+
+## Running the Analysis
+
+To run the sentiment analysis:
 Welcome! This project lets you **create and test your own Bitcoin price prediction algorithms**—no coding experience required.
 
 ## 🚀 Quick Start
